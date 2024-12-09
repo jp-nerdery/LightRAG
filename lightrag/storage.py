@@ -79,33 +79,32 @@ class NanoVectorDBStorage(BaseVectorStorage):
             "cosine_better_than_threshold", self.cosine_better_than_threshold
         )
 
+
     async def upsert(self, data: dict[str, dict]):
         logger.info(f"Inserting {len(data)} vectors to {self.namespace}")
-        if not len(data):
+        if not data:
             logger.warning("You insert an empty data to vector DB")
             return []
+        
+        keys = list(data.keys())
         list_data = [
             {
                 "__id__": k,
-                **{k1: v1 for k1, v1 in v.items() if k1 in self.meta_fields},
+                **{k1: data[k][k1] for k1 in self.meta_fields if k1 in data[k]},
             }
-            for k, v in data.items()
+            for k in keys
         ]
-        contents = [v["content"] for v in data.values()]
+        contents = [data[k]["content"] for k in keys]
         batches = [
             contents[i : i + self._max_batch_size]
             for i in range(0, len(contents), self._max_batch_size)
         ]
-        embedding_tasks = [self.embedding_func(batch) for batch in batches]
+
         embeddings_list = []
-        for f in tqdm_async(
-            asyncio.as_completed(embedding_tasks),
-            total=len(embedding_tasks),
-            desc="Generating embeddings",
-            unit="batch",
-        ):
-            embeddings = await f
+        for batch in batches:
+            embeddings = await self.embedding_func(batch)
             embeddings_list.append(embeddings)
+        
         embeddings = np.concatenate(embeddings_list)
         for i, d in enumerate(list_data):
             d["__vector__"] = embeddings[i]
